@@ -2303,110 +2303,6 @@ static int is_systemd_timer_available(void)
 	return real_is_systemd_timer_available();
 }
 
-static char *xdg_config_home_systemd(const char *filename)
-{
-	return xdg_config_home_for("systemd/user", filename);
-}
-
-static int systemd_timer_delete_unit_templates(void)
-{
-	int ret = 0;
-	char *filename = xdg_config_home_systemd("git-maintenance@.timer");
-	if (unlink(filename) && !is_missing_file_error(errno))
-		ret = error_errno(_("failed to delete '%s'"), filename);
-	FREE_AND_NULL(filename);
-
-	filename = xdg_config_home_systemd("git-maintenance@.service");
-	if (unlink(filename) && !is_missing_file_error(errno))
-		ret = error_errno(_("failed to delete '%s'"), filename);
-
-	free(filename);
-	return ret;
-}
-
-static int systemd_timer_write_unit_templates(const char *exec_path)
-{
-	char *filename;
-	FILE *file;
-	const char *unit;
-
-	filename = xdg_config_home_systemd("git-maintenance@.timer");
-	if (safe_create_leading_directories(filename)) {
-		error(_("failed to create directories for '%s'"), filename);
-		goto error;
-	}
-	file = fopen_or_warn(filename, "w");
-	if (!file)
-		goto error;
-
-	unit = "# This file was created and is maintained by Git.\n"
-	       "# Any edits made in this file might be replaced in the future\n"
-	       "# by a Git command.\n"
-	       "\n"
-	       "[Unit]\n"
-	       "Description=Optimize Git repositories data\n"
-	       "\n"
-	       "[Timer]\n"
-	       "OnCalendar=%i\n"
-	       "Persistent=true\n"
-	       "RandomizedDelaySecond=3540\n"
-	       "FixedRandomDelay=true"
-	       "\n"
-	       "[Install]\n"
-	       "WantedBy=timers.target\n";
-	if (fputs(unit, file) == EOF) {
-		error(_("failed to write to '%s'"), filename);
-		fclose(file);
-		goto error;
-	}
-	if (fclose(file) == EOF) {
-		error_errno(_("failed to flush '%s'"), filename);
-		goto error;
-	}
-	free(filename);
-
-	filename = xdg_config_home_systemd("git-maintenance@.service");
-	file = fopen_or_warn(filename, "w");
-	if (!file)
-		goto error;
-
-	unit = "# This file was created and is maintained by Git.\n"
-	       "# Any edits made in this file might be replaced in the future\n"
-	       "# by a Git command.\n"
-	       "\n"
-	       "[Unit]\n"
-	       "Description=Optimize Git repositories data\n"
-	       "\n"
-	       "[Service]\n"
-	       "Type=oneshot\n"
-	       "ExecStart=\"%s/git\" --exec-path=\"%s\" for-each-repo --config=maintenance.repo maintenance run --schedule=%%i\n"
-	       "LockPersonality=yes\n"
-	       "MemoryDenyWriteExecute=yes\n"
-	       "NoNewPrivileges=yes\n"
-	       "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_VSOCK\n"
-	       "RestrictNamespaces=yes\n"
-	       "RestrictRealtime=yes\n"
-	       "RestrictSUIDSGID=yes\n"
-	       "SystemCallArchitectures=native\n"
-	       "SystemCallFilter=@system-service\n";
-	if (fprintf(file, unit, exec_path, exec_path) < 0) {
-		error(_("failed to write to '%s'"), filename);
-		fclose(file);
-		goto error;
-	}
-	if (fclose(file) == EOF) {
-		error_errno(_("failed to flush '%s'"), filename);
-		goto error;
-	}
-	free(filename);
-	return 0;
-
-error:
-	free(filename);
-	systemd_timer_delete_unit_templates();
-	return -1;
-}
-
 static int systemd_timer_enable_unit(int enable,
 				     enum schedule_priority schedule)
 {
@@ -2447,24 +2343,21 @@ static int systemd_timer_enable_unit(int enable,
 	return 0;
 }
 
-static int systemd_timer_delete_units(void)
+static int systemd_timer_disable_units(void)
 {
 	return systemd_timer_enable_unit(0, SCHEDULE_HOURLY) ||
 	       systemd_timer_enable_unit(0, SCHEDULE_DAILY) ||
-	       systemd_timer_enable_unit(0, SCHEDULE_WEEKLY) ||
-	       systemd_timer_delete_unit_templates();
+	       systemd_timer_enable_unit(0, SCHEDULE_WEEKLY);
 }
 
 static int systemd_timer_setup_units(void)
 {
-	const char *exec_path = git_exec_path();
 
-	int ret = systemd_timer_write_unit_templates(exec_path) ||
-		  systemd_timer_enable_unit(1, SCHEDULE_HOURLY) ||
+	int ret = systemd_timer_enable_unit(1, SCHEDULE_HOURLY) ||
 		  systemd_timer_enable_unit(1, SCHEDULE_DAILY) ||
 		  systemd_timer_enable_unit(1, SCHEDULE_WEEKLY);
 	if (ret)
-		systemd_timer_delete_units();
+		systemd_timer_disable_units();
 	return ret;
 }
 
@@ -2473,7 +2366,7 @@ static int systemd_timer_update_schedule(int run_maintenance, int fd UNUSED)
 	if (run_maintenance)
 		return systemd_timer_setup_units();
 	else
-		return systemd_timer_delete_units();
+		return systemd_timer_disable_units();
 }
 
 enum scheduler {

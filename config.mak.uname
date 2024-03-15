@@ -68,6 +68,16 @@ ifeq ($(uname_S),Linux)
 	ifneq ($(findstring .el7.,$(uname_R)),)
 		BASIC_CFLAGS += -std=c99
 	endif
+	ifeq ($(shell command -v systemctl >/dev/null ?&& echo y),y)
+		XDG_DATA_HOME ?= $(HOME)/.local/share
+		# systemd user units of programm installed in the home directory
+		# (meaning prefix == $HOME) shall go in XDG_DATA_HOME
+		# (from man 5 systemd.unit)
+		SYSTEMD_USER_UNIT_DIR = $(strip $(if $(and \
+			$(findstring $(prefix),$(HOME)),\
+			$(findstring $(HOME),$(prefix))),\
+			$(XDG_DATA_HOME),$(prefix)/$(lib)))/systemd/user
+	endif
 endif
 ifeq ($(uname_S),GNU/kFreeBSD)
 	HAVE_ALLOCA_H = YesPlease

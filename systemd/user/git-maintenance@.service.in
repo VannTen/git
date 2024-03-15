@@ -1,0 +1,17 @@
+[Unit]
+Description=Optimize Git repositories data
+Documentation=man:git-maintenance(1)
+
+[Service]
+Type=oneshot
+ExecStart=@BINDIR@/git for-each-repo --config=maintenance.repo \
+          maintenance run --schedule=%i
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_VSOCK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service

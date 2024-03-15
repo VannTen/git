@@ -1,0 +1,12 @@
+[Unit]
+Description=Optimize Git repositories data
+Documentation=man:git-maintenance(1)
+
+[Timer]
+OnCalendar=%i
+Persistent=true
+RandomizedDelaySec=3540
+FixedRandomDelay=true
+
+[Install]
+WantedBy=timers.target

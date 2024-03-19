@@ -24,13 +24,6 @@ test_lazy_prereq SYSTEMD_ANALYZE '
 	systemd-analyze verify /lib/systemd/system/basic.target
 '
 
-test_systemd_analyze_verify () {
-	if test_have_prereq SYSTEMD_ANALYZE
-	then
-		systemd-analyze verify "$@"
-	fi
-}
-
 test_expect_success 'help text' '
 	test_expect_code 129 git maintenance -h >actual &&
 	test_grep "usage: git maintenance <subcommand>" actual &&
@@ -776,23 +769,32 @@ test_expect_success 'start and stop Windows maintenance' '
 		hourly daily weekly >expect &&
 	test_cmp expect args
 '
+test_expect_success SYSTEMD_ANALYZE 'validate maintenance systemd service unit' '
+	git_path=$(command -v git) &&
+	sed "s+@BINDIR@/git+${git_path}+" "$TEST_DIRECTORY"/../systemd/user/git-maintenance@.service.in > git-maintenance@.service &&
+	systemd-analyze verify git-maintenance@hourly.service git-maintenance@daily.service git-maintenance@weekly.service &&
+	rm git-maintenance@.service &&
+	unset git_path
+'
+
+test_expect_success SYSTEMD_ANALYZE 'validate maintenance systemd timer unit' '
+	SYSTEMD_UNIT_PATH="$TEST_DIRECTORY"/../systemd/user/: systemd-analyze verify git-maintenance@hourly.timer git-maintenance@daily.timer git-maintenance@weekly.timer
+	# ':' at the end of SYSTEMD_UNIT_PATH appends the default systemd search path
+	# This is needed because analyze tries to load implicit / default unit dependencies
+'
 
 test_expect_success 'start and stop Linux/systemd maintenance' '
 	write_script print-args <<-\EOF &&
 	printf "%s\n" "$*" >>args
 	EOF
 
-	XDG_CONFIG_HOME="$PWD" &&
-	export XDG_CONFIG_HOME &&
 	rm -f args &&
 	GIT_TEST_MAINT_SCHEDULER="systemctl:./print-args" git maintenance start --scheduler=systemd-timer &&
 
 	# start registers the repo
 	git config --get --global --fixed-value maintenance.repo "$(pwd)" &&
 
-	test_systemd_analyze_verify "systemd/user/git-maintenance@.service" &&
-
-	printf -- "--user enable --now git-maintenance@%s.timer\n" hourly daily weekly >expect &&
+	echo "--user --force --now enable" git-maintenance@hourly.timer git-maintenance@daily.timer git-maintenance@weekly.timer >expect &&
 	test_cmp expect args &&
 
 	rm -f args &&
@@ -801,10 +803,7 @@ test_expect_success 'start and stop Linux/systemd maintenance' '
 	# stop does not unregister the repo
 	git config --get --global --fixed-value maintenance.repo "$(pwd)" &&
 
-	test_path_is_missing "systemd/user/git-maintenance@.timer" &&
-	test_path_is_missing "systemd/user/git-maintenance@.service" &&
-
-	printf -- "--user disable --now git-maintenance@%s.timer\n" hourly daily weekly >expect &&
+	echo "--user --force --now disable" git-maintenance@hourly.timer git-maintenance@daily.timer git-maintenance@weekly.timer >expect &&
 	test_cmp expect args
 '
 
@@ -819,12 +818,12 @@ test_expect_success 'start and stop when several schedulers are available' '
 		hourly daily weekly >expect &&
 	printf "schtasks /delete /tn Git Maintenance (%s) /f\n" \
 		hourly daily weekly >>expect &&
-	printf -- "systemctl --user enable --now git-maintenance@%s.timer\n" hourly daily weekly >>expect &&
+	echo "systemctl --user --force --now enable" git-maintenance@hourly.timer git-maintenance@daily.timer git-maintenance@weekly.timer >>expect &&
 	test_cmp expect args &&
 
 	rm -f args &&
 	GIT_TEST_MAINT_SCHEDULER="systemctl:./print-args systemctl,launchctl:./print-args launchctl,schtasks:./print-args schtasks" git maintenance start --scheduler=launchctl &&
-	printf -- "systemctl --user disable --now git-maintenance@%s.timer\n" hourly daily weekly >expect &&
+	echo "systemctl --user --force --now disable" git-maintenance@hourly.timer git-maintenance@daily.timer git-maintenance@weekly.timer >expect &&
 	printf "schtasks /delete /tn Git Maintenance (%s) /f\n" \
 		hourly daily weekly >>expect &&
 	for frequency in hourly daily weekly
@@ -837,7 +836,7 @@ test_expect_success 'start and stop when several schedulers are available' '
 
 	rm -f args &&
 	GIT_TEST_MAINT_SCHEDULER="systemctl:./print-args systemctl,launchctl:./print-args launchctl,schtasks:./print-args schtasks" git maintenance start --scheduler=schtasks &&
-	printf -- "systemctl --user disable --now git-maintenance@%s.timer\n" hourly daily weekly >expect &&
+	echo "systemctl --user --force --now disable" git-maintenance@hourly.timer git-maintenance@daily.timer git-maintenance@weekly.timer >expect &&
 	printf "launchctl bootout gui/[UID] $pfx/Library/LaunchAgents/org.git-scm.git.%s.plist\n" \
 		hourly daily weekly >>expect &&
 	printf "schtasks /create /tn Git Maintenance (%s) /f /xml\n" \
@@ -846,7 +845,7 @@ test_expect_success 'start and stop when several schedulers are available' '
 
 	rm -f args &&
 	GIT_TEST_MAINT_SCHEDULER="systemctl:./print-args systemctl,launchctl:./print-args launchctl,schtasks:./print-args schtasks" git maintenance stop &&
-	printf -- "systemctl --user disable --now git-maintenance@%s.timer\n" hourly daily weekly >expect &&
+	echo "systemctl --user --force --now disable" git-maintenance@hourly.timer git-maintenance@daily.timer git-maintenance@weekly.timer >expect &&
 	printf "launchctl bootout gui/[UID] $pfx/Library/LaunchAgents/org.git-scm.git.%s.plist\n" \
 		hourly daily weekly >>expect &&
 	printf "schtasks /delete /tn Git Maintenance (%s) /f\n" \

@@ -2303,70 +2303,35 @@ static int is_systemd_timer_available(void)
 	return real_is_systemd_timer_available();
 }
 
-static int systemd_timer_enable_unit(int enable,
-				     enum schedule_priority schedule)
+static int systemd_set_units_state(int enable)
 {
 	const char *cmd = "systemctl";
 	struct child_process child = CHILD_PROCESS_INIT;
-	const char *frequency = get_frequency(schedule);
-
-	/*
-	 * Disabling the systemd unit while it is already disabled makes
-	 * systemctl print an error.
-	 * Let's ignore it since it means we already are in the expected state:
-	 * the unit is disabled.
-	 *
-	 * On the other hand, enabling a systemd unit which is already enabled
-	 * produces no error.
-	 */
-	if (!enable)
-		child.no_stderr = 1;
 
 	get_schedule_cmd(&cmd, NULL);
 	strvec_split(&child.args, cmd);
-	strvec_pushl(&child.args, "--user", enable ? "enable" : "disable",
-		     "--now", NULL);
-	strvec_pushf(&child.args, "git-maintenance@%s.timer", frequency);
+
+	strvec_pushl(&child.args, "--user", "--force", "--now",
+			enable ? "enable" : "disable",
+			"git-maintenance@hourly.timer",
+			"git-maintenance@daily.timer",
+			"git-maintenance@weekly.timer", NULL);
+	/*
+	 * --force override existing conflicting symlinks
+	 * We need it because the units have changed location (~/.config ->
+	 * /usr/lib)
+	 */
 
 	if (start_command(&child))
 		return error(_("failed to start systemctl"));
 	if (finish_command(&child))
-		/*
-		 * Disabling an already disabled systemd unit makes
-		 * systemctl fail.
-		 * Let's ignore this failure.
-		 *
-		 * Enabling an enabled systemd unit doesn't fail.
-		 */
-		if (enable)
-			return error(_("failed to run systemctl"));
+		return error(_("failed to run systemctl"));
 	return 0;
-}
-
-static int systemd_timer_disable_units(void)
-{
-	return systemd_timer_enable_unit(0, SCHEDULE_HOURLY) ||
-	       systemd_timer_enable_unit(0, SCHEDULE_DAILY) ||
-	       systemd_timer_enable_unit(0, SCHEDULE_WEEKLY);
-}
-
-static int systemd_timer_setup_units(void)
-{
-
-	int ret = systemd_timer_enable_unit(1, SCHEDULE_HOURLY) ||
-		  systemd_timer_enable_unit(1, SCHEDULE_DAILY) ||
-		  systemd_timer_enable_unit(1, SCHEDULE_WEEKLY);
-	if (ret)
-		systemd_timer_disable_units();
-	return ret;
 }
 
 static int systemd_timer_update_schedule(int run_maintenance, int fd UNUSED)
 {
-	if (run_maintenance)
-		return systemd_timer_setup_units();
-	else
-		return systemd_timer_disable_units();
+	return systemd_set_units_state(run_maintenance);
 }
 
 enum scheduler {

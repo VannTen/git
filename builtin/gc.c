@@ -2329,8 +2329,50 @@ static int systemd_set_units_state(int enable)
 	return 0;
 }
 
+/*
+ * TODO: in the future (~2026 ?) remove this cleanup code
+ */
+static void systemd_delete_user_unit(char const *unit)
+{
+	char const	file_start_stale[] =	"# This file was created and is"
+						" maintained by Git.";
+	char		file_start_user[sizeof(file_start_stale)] = {'\0'};
+
+	char *filename = xdg_config_home_for("systemd/user", unit);
+	int handle = open(filename, O_RDONLY);
+
+	/*
+	 * Check this is actually our file and we're not removing a legitimate
+	 * user override.
+	 */
+	if (handle == -1 && !is_missing_file_error(errno))
+		warning(_("failed to delete '%s'"), filename);
+	else {
+		read(handle, file_start_user, sizeof(file_start_stale) - 1);
+		close(handle);
+		if (strcmp(file_start_stale, file_start_user) == 0) {
+			if (unlink(filename) == 0)
+				warning(_("deleted stale unit file '%s'"), filename);
+			else if (!is_missing_file_error(errno))
+				warning(_("failed to delete '%s'"), filename);
+		}
+	}
+
+	free(filename);
+}
+
 static int systemd_timer_update_schedule(int run_maintenance, int fd UNUSED)
 {
+	/*
+	 * A previous version of Git wrote the units in the user configuration
+	 * directory. Clean these up, if they exist.
+	 * TODO: in the future (~2026 ?) remove this cleanup code
+	 */
+	systemd_delete_user_unit("git-maintenance@hourly.timer");
+	systemd_delete_user_unit("git-maintenance@daily.timer");
+	systemd_delete_user_unit("git-maintenance@weekly.timer");
+	systemd_delete_user_unit("git-maintenance@.timer");
+	systemd_delete_user_unit("git-maintenance@.service");
 	return systemd_set_units_state(run_maintenance);
 }
 
